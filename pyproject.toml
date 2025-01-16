@@ -10,6 +10,10 @@ python = "^3.12"
 transformers = "^4.48.0"
 datasets = "^3.2.0"
 torch = "^2.5.1"
+pgvector = "^0.3.6"
+pypdf = "^5.1.0"
+psycopg = {extras = ["binary"], version = "^3.2.4"}
+sqlalchemy = "^2.0.37"
 
 
 [build-system]
