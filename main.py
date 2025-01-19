@@ -2,39 +2,21 @@ import pandas as pd
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, Seq2SeqTrainer, Seq2SeqTrainingArguments
 from datasets import Dataset
 from evaluate import load
-import json
-import nltk
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+import matplotlib.pyplot as plt
 
-nltk.download('punkt')
+data = pd.read_csv("archive/recipes_cleaned.csv")
 
-df = pd.read_csv("DataConvercion/data/modified_recipes2.csv")
-df.to_json("DataConvercion/data/modified_recipes2.json", orient="records", lines=True)
-
-with open("DataConvercion/data/modified_recipes2.json", "r") as f:
-    data = [json.loads(line) for line in f]
-
-dataset = Dataset.from_list(data)
-
-def parse_ingredients(ingredients_str):
-    ingredients_list = ingredients_str.split(", ")
-    parsed_ingredients = []
-    for ing in ingredients_list:
-        parts = ing.split(" ", 2)
-        if len(parts) == 3:
-            parsed_ingredients.append({
-                "quantity": parts[0],
-                "unit": parts[1],
-                "name": parts[2]
-            })
-    return parsed_ingredients
+dataset = Dataset.from_pandas(data)
 
 dataset = dataset.map(lambda x: {
-    "text": x["recipe_name"] + " Ingredients: " + ", ".join([
-        f"{ing['quantity']} {ing['unit']} {ing['name']}" for ing in parse_ingredients(x["ingredients"])
-    ])
+    "text": (x.get("title", "") if x.get("title") is not None else "") +
+            " Ingredients: " + ", ".join(eval(x.get("ingredients", "[]"))) +
+            " Instructions: " + x.get("instructions", ""),
+    "instructions": x.get("instructions", "")
 })
 
-train_test_split = dataset.train_test_split(test_size=0.1)
+train_test_split = dataset.train_test_split(test_size=0.1, train_size=0.1)
 train_dataset = train_test_split['train']
 eval_dataset = train_test_split['test']
 
@@ -43,7 +25,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 def tokenize_function(examples):
     inputs = tokenizer(examples["text"], padding="max_length", truncation=True, max_length=512)
-    labels = tokenizer(examples["text"], padding="max_length", truncation=True, max_length=512)
+    labels = tokenizer(examples["instructions"], padding="max_length", truncation=True, max_length=512)
     inputs["labels"] = labels["input_ids"]
     return inputs
 
@@ -68,27 +50,50 @@ def compute_metrics(eval_pred):
     bleu = bleu_metric.compute(predictions=predictions, references=labels)["bleu"]
     rouge = rouge_metric.compute(predictions=predictions, references=labels)["rougeL"]
 
-    return {
+    y_test = [1 if label else 0 for label in labels]
+    y_pred = [1 if pred else 0 for pred in predictions]
+
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='macro')
+    recall = recall_score(y_test, y_pred, average='macro')
+    f1 = f1_score(y_test, y_pred, average='macro')
+    roc_auc = roc_auc_score(y_test, y_pred)
+
+    metrics = {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "roc_auc": roc_auc,
         "bleu": bleu,
         "rouge": rouge,
     }
 
+    plt.figure(figsize=(10, 5))
+    plt.bar(metrics.keys(), metrics.values())
+    plt.title("Model Metrics")
+    plt.ylabel("Score")
+    plt.show()
+
+    return metrics
+
 training_args = Seq2SeqTrainingArguments(
     output_dir="./results",
-    evaluation_strategy="epoch",
+    evaluation_strategy="no",
     save_strategy="epoch",
-    learning_rate=2e-5,
-    per_device_train_batch_size=2,
-    per_device_eval_batch_size=2,
-    num_train_epochs=5,
+    learning_rate=1e-5,
+    per_device_train_batch_size=1,
+    per_device_eval_batch_size=1,
+    num_train_epochs=1,
     weight_decay=0.01,
-    save_total_limit=2,
+    save_total_limit=1,
     logging_dir="./logs",
-    logging_steps=10,
-    load_best_model_at_end=True,
+    logging_steps=50,
+    load_best_model_at_end=False,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     predict_with_generate=True,
+    fp16=True,
 )
 
 trainer = Seq2SeqTrainer(
